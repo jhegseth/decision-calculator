@@ -78,7 +78,7 @@ server <- function(input, output) {
               '+', input$Ch_node_name3 ,'|', input$P_node_name3, sep = ' ') }) 
     
     dia_func3 <- eventReactive(input$update_gr,{a <- 
-        paste('.~.', #'+',input$P_node_name3, 
+        paste('.~.', 
               '+', input$Ch_node_name3 ,'|', input$P_node_name3, sep = ' ') })
     
     value <- reactiveValues(first = TRUE)
@@ -86,18 +86,11 @@ server <- function(input, output) {
     
     
     output$Skel3 <- renderDiagrammeR({
-        #skel<- HydeNetwork(as.formula(dia_func2()))
         if(value$first == TRUE){
-            #skel <<- update(skel, .~. + p|q)
-            #skel <<- update(skel, .~. - y|x)
-            skel <<- HydeNetwork(as.formula(dia_func2()))#~ p + q|p)
+            skel <<- HydeNetwork(as.formula(dia_func2()))
             value$first<-FALSE
             }
         else{
-            #get the current formula
-            #now fix the formula
-            while (grepl('\\+ \\+', sf)){sf = gsub('\\+ \\+', '\\+', sf)} # make sure there are no spaces beteen +s
-            while (grepl('\\+\\+', sf)){sf = gsub('\\+\\+', '\\+', sf)} #get rid of repeated +s
             skel <<- update(skel,  as.formula(dia_func3()))
             }
         plot(skel)
