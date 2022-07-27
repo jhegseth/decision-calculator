@@ -14,12 +14,267 @@ library(DiagrammeR)
 library(HydeNet)
 library(datasets)
 
-# Define UI for application that draws a histogram
+updateBN <- function(BN_glob){ #function to update model-list after updating CPTs
+  new_df <- BN_glob$data #initialize new data with old data
+  for(cn in colnames(new_df)){ #put in the level names for humans
+    xfact = eval(parse(text = paste("BN_glob$factorLevels$",cn,sep = '')))
+    print(paste('factors of,', cn, ' are: ', list(xfact)))
+    eval(parse(text = paste('levels(new_df$', cn, ') <- BN_glob$factorLevels$', cn ,sep = '')))
+  }
+  
+  # now loop though and input make new data based on new probs and cndprobs
+  
+  un_finished_nodes <- BN_glob$nodes #list of undone nodes to cross off as they are processed
+  while(length(un_finished_nodes) > 0){ #keep looping through unfinished nodes
+    for(x in un_finished_nodes){     #iterate over all unfinished nodes
+      #print(paste('beginning for loop child node is: ', x))
+      xpar = eval(parse(text = paste("BN_glob$parents$",x,sep = ''))) #get parents
+      cat(paste('beginning for loop child node is: ', x, '\n its parents are: ', toString(xpar), '\n'))
+      n=nrow(new_df) #no of data points -- keep the same number made in the skeleton
+      
+      if (is.null(xpar) ){ #treat the  root nodes unconditionally
+        cat('made into root part \n')
+        #read the new file ... need to generalize the storage folder
+        txt = paste0("C:\\Users\\jjheg\\R projects\\BN_APP\\",x,".csv")
+        eval(quote(dftest <- read.csv(txt)))
+        print(dftest)
+        N <- nrow(dftest) #number of factors
+        #print(paste('there are ', N, 'levels'))
+        
+        txtFL <- eval(parse(text = paste("BN_glob$factorLevels$",x,sep = '')))
+        #print(paste('its levels are ', toString(txtFL)))
+        
+        
+        #now input the read probabilities into Probs to construct the DF
+        Probs  <- dftest$Freq 
+        #read.csv("C:\\Users\\jjheg\\R projects\\BN_APP\\Child.csv")
+        print(paste('adding column: ',x))
+        #txt = paste0("df <- cbind(df, ",x," <- as.factor(1:3 %*% rmultinom(",n,",1,prob=c(.5,.3,.2))))")
+        txt = paste0("new_df$",x," <- as.factor(1:",N," %*% rmultinom(",n,",1,prob=Probs))")
+        eval(parse(text = txt))#, envir = globalenv())
+        eval(parse(text = paste('levels(new_df$',x, ') <- BN_glob$factorLevels$',x,sep = '')))
+        
+        # cross this node off the list
+        un_finished_nodes = un_finished_nodes[!(un_finished_nodes %in% x)]   
+        
+        
+        
+      } # end of root treatments
+      
+      else{ #treat nodes that are not a root ( are conditioned or have  parents)
+        
+        if(any(xpar %in% un_finished_nodes)) {next} #only proceed if all parents are already in new_df
+        cat('Made into conditional part. \n')
+        txt = paste0("C:\\Users\\jjheg\\R projects\\BN_APP\\",x,".csv")
+        eval(quote(dftest <- read.csv(txt)))
+        cat("dftest is: \n")
+        print(dftest)
+        
+        
+        #***** calc cond prob fucntion
+        cat(paste('parents are: ', list(xpar), '\n'))
+        # for each par combo of a node, e.g. payoff has (decision, child) for parents ...
+        # i need to subset the new_df for each combinations of values of the parents and find
+        # the correspond probs of the child in dftest and call multinomial for these probs
+        # to choose values for the child for each combo of the parents values.
+        
+        #1) get subsetting argument for the probs
+        arguPR = ""
+        for (i in xpar) {  arguPR = paste0(arguPR,paste0("dftest$",i," ,"))}
+        
+        #2) get subsetting argument for the data table
+        arguDT = ""
+        for (i in xpar) {  arguDT = paste0(arguDT,paste0("new_df$",i," ,"))}
+        
+        #3) get the combo of parent levels
+        txt = paste0("combos <- interaction(", arguPR, " sep = ',')")
+        combos = levels(eval(parse(text = txt)))
+        
+        #4) find parents levels in the new_df 
+        txtFL <- eval(parse(text = paste("BN_glob$factorLevels$",x,sep = '')))
+        #print(paste('the child levels are ', toString(txtFL)))
+        N <- length(unlist(txtFL))
+        #print(paste('there are ', N, 'child levels'))
+        
+        
+        arguPR = unlist(strsplit(arguPR, ','))
+        arguDT = unlist(strsplit(arguDT, ','))
+        
+        for(j in strsplit(as.character(combos), ' ')){ #loop over combos
+          yy = unlist(strsplit(j[1], ',')) #split to a list
+          #5) get probs from input cpt 
+          arguPR2 = ""
+          for(k in range(1,length(arguPR)))
+          {arguPR2 = paste0(arguPR2
+                            ,paste0(eval(parse(text = paste0('arguPR[',k,']'))),"== '"
+                                    , eval(parse(text = paste0('yy[',k,']')))
+                                    ,"' &"))
+          }
+          arguPR2 = substring(arguPR2, 1, nchar(arguPR2)-1) #get rid of last &
+          txt2 <- paste('Probs <- dftest[',arguPR2, ' ,]$Freq')
+          Probs = eval(parse(text = txt2))
+          print(paste('Probs are: ', list(Probs)))
+          
+          #6) use Probs from input CPT to remake child values for each subset of combo levels
+          arguDT2 = ""
+          for(k in range(1,length(arguDT)))
+          {arguDT2 = paste0(arguDT2
+                            ,paste0(eval(parse(text = paste0('arguDT[',k,']'))),"== '"
+                                    , eval(parse(text = paste0('yy[',k,']')))
+                                    ,"' &"))
+          }
+          arguDT2 = substring(arguDT2, 1, nchar(arguDT2)-1) #get rid of last &
+          txt2 <- paste('Subset_DT <- new_df[',arguDT2, ' ,]')
+          Subset_DT <- eval(parse(text = txt2))
+          
+          #7) generate new child values into subset table
+          n = nrow(Subset_DT) #no. of values to generate
+          txt = paste0("chld <- as.factor(1:",N," %*% rmultinom(",n,",1,prob=Probs))")
+          chld <- eval(parse(text = txt))
+          #put in factor leveLs
+          eval(parse(text = paste('levels(chld) <- BN_glob$factorLevels$', x ,sep = '')))
+          
+          
+          
+          #7) put new child values into subset table and then full table
+          txt = paste0("Subset_DT$",x," <- chld")
+          eval(parse(text = txt))
+          cat("Subset_DT is: \n")
+          print(Subset_DT)
+          #update the original dataframe... will be completed on last pass
+          new_df[rownames(Subset_DT),] <- Subset_DT
+          
+        } #end of for loop over subset combos to update cpt
+        
+        # cross this node off the list
+        un_finished_nodes = un_finished_nodes[!(un_finished_nodes %in% x)]
+        
+      }   #end of conditioned node treatment
+      
+      
+      
+      
+      
+    } #end of for loop over un_finished_nodes
+    cat('End of for loop. \n')
+    cat(paste('unfinished nodes are: ', list(un_finished_nodes),'\n \n'))
+    
+  } # end of while loop when un_finished_nodes > 0
+  
+  #put back the original factor levels
+  for(cn in colnames(new_df)){ 
+    eval(parse(text = paste('levels(new_df$', cn, ') <- levels(BN_glob$data$', cn, ')' ,sep = '')))
+  }
+  
+  return(new_df)
+  
+} #wnd of function
+
+
+#make a function to create utility tables from previously created freq table i.e, combos of input already created
+make_util_tables <- function(BN_glob = BN_glob){
+  #now loop through xpar
+  for(x in BN_glob$nodes){     #iterate over all  nodes
+    print(paste('node is: ', x))
+    xpar = eval(parse(text = paste("BN_glob$parents$",x,sep = ''))) #get parents
+    Util <- eval(parse(text = paste("BN_glob$nodeUtility$",x,sep = ''))) #test if node is a utility node
+    
+    if (!is.null(xpar) & Util) { #treat the utility nodes
+      print(paste('parent are: ', xpar))
+      #first read table written previously as a CPT 
+      cat('Made into utility part. \n')
+      txt = paste0("C:\\Users\\jjheg\\R projects\\BN_APP\\",x,".csv")
+      eval(quote(util_tbl <- read.csv(txt)))
+      cat("util_tbl is: \n")
+      print(util_tbl)
+      
+      #AND NOW MODIFY THIS TABLE
+      if("Freq" %in% colnames(util_tbl)){ #only update if it needs updating
+        
+          util_tbl = subset(util_tbl, select = -Freq) #delete the Freq column
+          
+          
+          #the column name with the payoff
+          P = noquote(colnames(util_tbl)[length(colnames(util_tbl))])
+          # and cut the table to one level of the payoff
+          util_tbl <- eval(parse(text = paste0("subset(util_tbl, ",P," == unique(subset(util_tbl,  select=",P,"))[1,1])")))
+          #and now put a dummy value into the payoff
+          eval(parse(text = paste0("util_tbl[,'",P,"'] = 1.0")))
+          
+          print(util_tbl)
+          write.csv(util_tbl, paste0(x,".csv"), row.names = FALSE)
+          print('yes')
+      }
+      else{
+        print('you already updated the table')
+        }
+    }    
+    
+  } #end loop
+} #end function
+
+#FUNCTION TO MAKE UTILITY TABLE
+updateDN <- function(BN_glob = BN_glob){
+  new_df <- BN_glob$data #initialize new data with old data
+  for(cn in colnames(new_df)){ #put in the level names for humans
+    xfact = eval(parse(text = paste("BN_glob$factorLevels$",cn,sep = '')))
+    print(paste('factors of,', cn, ' are: ', list(xfact)))
+    eval(parse(text = paste('levels(new_df$', cn, ') <- BN_glob$factorLevels$', cn ,sep = '')))
+  }
+  
+  #GET TABLE NAMES
+  ute = names(BN_glob$nodeUtility[BN_glob$nodeUtility == TRUE])
+  NON_ute = names(BN_glob$nodeUtility[BN_glob$nodeUtility == FALSE])
+  
+  txt = paste0("C:\\Users\\jjheg\\R projects\\BN_APP\\",ute,".csv")
+  eval(quote(util_tbl <- read.csv(txt)))
+  
+  
+  #MAKE NEW MODEL LIST
+  BN_glob2 <- HydeNetwork(BN_glob$network_formula
+                          , data = new_df[ ,NON_ute])
+  
+  #MAKE THE UTILITY TABLE WITH NEW VALUES
+  yy ='' 
+  
+  for (i in 1:length(util_tbl[[1]])) {
+    for (j in 2:length(util_tbl)){
+      if( j == 2){
+        xx=paste0(" ifelse(",colnames(util_tbl)[j]," == '",util_tbl[i,noquote(paste0(colnames(util_tbl)[j]))],"'")
+        #print(paste('j=2: ', xx))
+      }
+      else if(i != length(util_tbl[[1]]) && j == length(util_tbl)){
+        xx=paste0(", ",util_tbl[i,noquote(paste0(colnames(util_tbl)[j]))],", ")
+        print(paste('last j non end: ', xx))
+      }
+      else if(i == length(util_tbl[[1]]) && j == length(util_tbl)){
+        xx=paste0(", ",util_tbl[i,noquote(paste0(colnames(util_tbl)[j]))],", 0 ", paste(rep(")", length(util_tbl[[1]]) + 1), collapse = ""))
+        #print(paste('last j end: ', xx))
+      }
+      
+      else{
+        xx=paste0(" && ",colnames(util_tbl)[j]," == '",util_tbl[i,noquote(paste0(colnames(util_tbl)[j]))],"'")
+        #print(paste('middle j: ', xx))
+      }
+      yy <- paste(yy,xx)
+      
+    }
+  }
+  print(yy)
+  
+  pyoff =colnames(util_tbl)[length(util_tbl)]
+  txt <- paste("BN_glob2 <- setNode(BN_glob2, ", pyoff, ", 'determ', define=fromFormula(), nodeFormula = ", pyoff, " ~ ",yy )
+  print(txt)
+  eval(parse(text = txt))
+  
+} #END FUNCTION
+
+# Define UI for decision app
 ui <- fluidPage(
 
 #    FIRST BUILD A SKELETON AND GET VARIABLES
     tabsetPanel(
-        tabPanel("Hydenet Skeleton"
+        tabPanel("MAKE BAYES NET SKELETON"
                   ,h2("enter a new  parent node name")
                   ,column(width = 6
                           ,textInput("P_node_name3", "Node", "Parent")
@@ -83,8 +338,9 @@ ui <- fluidPage(
             ,verbatimTextOutput("Formula")
         
             )
+        
 #NEXT USE BN SKELETON TO GENERATE SIMULATED DATA AND RECONSTRUCT BN
-        ,tabPanel("BN Net"
+        ,tabPanel("MAKE BAYES NET"
                   ,column(width = 12
                           ,actionButton("update_BN", "Update BaysNet")
                           ,hr()
@@ -104,13 +360,75 @@ ui <- fluidPage(
                                    ,h4(" Shows the details of the BNs model. ")
                                    ,verbatimTextOutput("BNObj"))
                   )
+                  ,column(width = 12
+                          ,actionButton("Write_BN", "Write the Bayes Net to disk")
+                          ,hr()
+                  )
+            )
+
+#NEXT READ BN AND UPDATE BAYES NET CPT CSV'S AND ROOT PT CSV'S
+        ,tabPanel("UPDATE BAYES NET"
+                  ,fluidRow(column(width = 12
+                                   , h3("First get a CPT")
+                                   , fileInput("fileBN", "Choose CSV File", accept = ".csv") 
+                                   ,checkboxInput("header", "Header", TRUE)
+                  ))
                   
+                  ,fluidRow(column(width = 12
+                                   , h3("Uploaded file")
+                                   , tableOutput("contentsBN")
+                  ))
                   
-                  
-        ) 
-        
-    )
-)
+                  ,fluidRow(column(width = 12
+                                   , h3("Update and Save Probability Table")
+                                   , DT::dataTableOutput("probs.df_data_BN")
+                                   
+                  ))
+                ,fluidRow(column(width = 12
+                                   , h3("Update the model")
+                                   ,actionButton("update_model", "Update the Bayes Net")
+                                   
+                  ))
+
+              )
+
+#NEXT READ UDATED BN AND MAKE DECISION NET
+#MODIFY UTILITY NODE CSV'S, MAKE SURE DECISION NODE ARE LABELED, MAKE THE DN, AND 
+#CALCULATE MEU
+      ,tabPanel("UPDATE DECISION NET"  
+                ,fluidRow(column(width = 12
+                                 , h3("Update the payoff node (initially its built as a CPT)")
+                                 ,actionButton("update_UT_node", "Update the utility node")
+
+                ))
+                ,fluidRow(column(width = 12
+                                 , h3("Now update the payoff node")
+                                 , fileInput("fileDN", "Choose  File", accept = ".csv")
+                                 ,checkboxInput("header", "Header", TRUE)
+                ))
+
+                ,fluidRow(column(width = 12
+                                 , h3("Uploaded file")
+                                 , tableOutput("contentsDN")
+                ))
+
+                ,fluidRow(column(width = 12
+                                 , h3("Update and Save Payoff Table")
+                                 , DT::dataTableOutput("probs.df_data_DN")
+
+                ))
+                ,fluidRow(column(width = 12
+                                 , h3("Update the DN and calculate the Maximum Expected Utility")
+                                 ,actionButton("updateDN", "Update the Decision Net")
+
+                ))
+                , h3("see the final DN")
+                , grVizOutput("BN_glob2")
+                ,h3(" Shows the MEU. ")
+                ,verbatimTextOutput("MEU")
+              )  
+            )
+        )
 
 # Define server oto make a decision net
 server <- function(input, output) {
@@ -386,6 +704,39 @@ server <- function(input, output) {
             list(Bnet,df) # need them both for the good bays net and the table 
         }        
 # now reconstruct the bnet with fake data
+        
+        #make a function to create freq tables
+        make_freq_tables <- function(BN_glob = BN_glob){
+          #now loop through xpar
+          for(x in BN_glob$nodes){     #iterate over all  nodes
+            print(paste('node is: ', x))
+            xpar = eval(parse(text = paste("BN_glob$parents$",x,sep = ''))) #get parents
+            
+            if (is.null(xpar) ) { #treat the root nodes
+              xfact = eval(parse(text = paste("BN_glob$factorLevels$",x,sep = '')))
+              print(paste('factors root node,', x, ' are: ', xfact))
+              tbl <- eval(parse(text = paste('as.data.frame(xtabs(~',x,',data = BN_glob$data))',sep = '')))
+              tbl$Freq <- tbl$Freq/sum(tbl$Freq) # make freq into a prob
+              eval(parse(text = paste('levels(tbl$', x, ') <- BN_glob$factorLevels$', x ,sep = '')))
+              print(tbl)
+              write.csv(tbl, paste0(x,".csv"), row.names = FALSE)
+            }
+            
+            if (!is.null(xpar) ) { #treat the cpt nodes
+              print(paste('parent are: ', xpar))
+              cpt_tbl = eval(parse(text = paste('as.data.frame(ftable(cpt(BN_glob$nodeFormula$',x,', BN_glob$data)))')))
+              eval(parse(text = paste('levels(cpt_tbl$', x, ') <- BN_glob$factorLevels$', x ,sep = '')))
+              for(par in xpar){ 
+                xfact = eval(parse(text = paste("BN_glob$factorLevels$",par,sep = '')))
+                print(paste('factors of,', par, ' are: ', xfact))
+                eval(parse(text = paste('levels(cpt_tbl$', par, ') <- BN_glob$factorLevels$', par ,sep = '')))
+                
+              }
+              print(cpt_tbl)
+              write.csv(cpt_tbl, paste0(x,".csv"), row.names = FALSE)
+            }
+          } #end loop
+        } #end function
 
   # use reactiveValues to store out() output
         
@@ -421,7 +772,14 @@ server <- function(input, output) {
 
         })
         
-        }) # end of update_BN        
+        }) # end of update_BN
+        
+  # write the decision net to disk
+        observeEvent(input$Write_BN,{
+          make_freq_tables(BN_glob) #BN_glob is in the global env
+          
+        })
+        
 
   # this is the experimental radio output
         output$txt1 <- renderText({
@@ -460,7 +818,175 @@ server <- function(input, output) {
           
         })
         
+# now treat the csv file I/O and editing for the BN        
+        dataBN <- reactive({
+          
+          file <- input$fileBN #
+          
+          ext <- tools::file_ext(file$datapath)
+          
+          req(file)
+          validate(need(ext == "csv", "Please upload a BN csv file"))
+          
+          d1 <- read.csv(file$datapath, header = input$header)
+
+          assign("d1", d1, envir = .GlobalEnv) 
+          
+          d1
+        })
+        
+        
+        output$contentsBN <- renderTable({
+          dataBN()
+        })
+        
+        output$probs.df_data_BN <- renderDataTable({
+          
+          d1 <-dataBN()
+          
+          df <- datatable(
+            d1,
+            selection = 'none', editable = TRUE, 
+            rownames = TRUE,
+            extensions="Buttons",
+            
+            options = list(
+              paging = TRUE,
+              searching = TRUE,
+              fixedColumns = TRUE,
+              autoWidth = TRUE,
+              ordering = TRUE,
+              dom = 'Bfrtip',
+              buttons = c('csv', 'excel')
+            ),
+            
+            class = "display"
+          )
+          
+          return(df)
+        })
+        
+        # Every rendered DT will create a input_cell_edit object that contains the row and column index of the edit.
+        observeEvent(input$probs.df_data_BN_cell_edit, {
+          d1[input$probs.df_data_BN_cell_edit$row,input$probs.df_data_BN_cell_edit$col] <<- input$probs.df_data_BN_cell_edit$value
+        })
+        
+        # update the bayes net when new cpts are input
+        observeEvent(input$update_model,{
+          
+          new_df <- updateBN(BN_glob)
+          BN_glob$data <- new_df
+          
+          assign("BN_glob", BN_glob, envir = .GlobalEnv)#BN_glob is in the global env
+          
+        })
+        
+        observeEvent(input$update_UT_node,{
+          
+          make_util_tables(BN_glob)
+
+        })
+        
+# now treat the csv file I/O and editing for the utility node of the DN        
+        dataDN <- reactive({
+          
+          file <- input$fileDN #
+          
+          ext <- tools::file_ext(file$datapath)
+          
+          req(file)
+          validate(need(ext == "csv", "Please upload a DN utility csv file"))
+          
+          d1 <- read.csv(file$datapath, header = input$header)
+          
+          assign("d1", d1, envir = .GlobalEnv) 
+          
+          d1
+        })
+        
+        
+        output$contentsDN <- renderTable({
+          dataDN()
+        })
+        
+        output$probs.df_data_DN <- renderDataTable({
+          
+          d1 <-dataDN()
+          
+          df <- datatable(
+            d1,
+            selection = 'none', editable = TRUE, 
+            rownames = TRUE,
+            extensions="Buttons",
+            
+            options = list(
+              paging = TRUE,
+              searching = TRUE,
+              fixedColumns = TRUE,
+              autoWidth = TRUE,
+              ordering = TRUE,
+              dom = 'Bfrtip',
+              buttons = c('csv', 'excel')
+            ),
+            
+            class = "display"
+          )
+          
+          return(df)
+        })
+        
+        # Every rendered DT will create a input_cell_edit object that contains the row and column index of the edit.
+        observeEvent(input$probs.df_data_DN_cell_edit, {
+          d1[input$probs.df_data_DN_cell_edit$row,input$probs.df_data_DN_cell_edit$col] <<- input$probs.df_data_DN_cell_edit$value
+        })
+        
+        # update the DECISION NET when AFTER THE UTILITY NODE IS UPDATED
+        observeEvent(input$updateDN,{
+          
+          BN_glob2 <- updateDN(BN_glob)
+          
+          BN_glob2 <- setDecisionNodes(BN_glob2, Decision)
+          BN_glob2 <- setUtilityNodes(BN_glob2, payoff)
+
+          assign("BN_glob2", BN_glob2, envir = .GlobalEnv)  #BN_glob is in the global env
+          
+          #4) calculate the MEU
+          
+          writeNetworkModel(BN_glob2, pretty=TRUE)
+          compiledNet <- compileJagsModel(BN_glob2, #data = evidence,
+                                          n.chains = 3,
+                                          n.adapt = 5000)
+          # still doesn't like the elseif in the payoff maybe its the '&'
+          post <- HydeSim(compiledNet,
+                          variable.names = trackedVars,
+                          n.iter=10000)
+          
+          dplyr::sample_n(post, 20)
+          
+          
+          compiledNets <- compileDecisionModel(BN_glob2) #, policyMatrix = policies)
+          
+          samples <- lapply(compiledNets,
+                            HydeSim,
+                            variable.names = trackedVars,
+                            n.iter=10000)
+          
+          lapply(samples, head)
+          lapply(samples, function(l) mean(l$payoff))
+          
+          output$BN_glob2 <- renderDiagrammeR({ #build skeleton and display
+          plot(BN_glob2)       
+          })
+          
+          output$MEU <- renderPrint({
+            paste('value of each decision: ', toString(lapply(samples, function(l) mean(l$payoff))), sep=' ')
+          })
+          
+          
+        })  
+
 }
 
+#one more line
 # Run the application add
 shinyApp(ui = ui, server = server)
